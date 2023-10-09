@@ -18,6 +18,10 @@ bool DefinitionLinesDenylistEnforcer::isAllowListed(core::Context ctx, core::Sym
 void DefinitionLinesDenylistEnforcer::checkLoc(core::Context ctx, core::Loc loc) {
     auto detailStart = core::Loc::offset2Pos(file.data(ctx), loc.beginPos());
     auto detailEnd = core::Loc::offset2Pos(file.data(ctx), loc.endPos());
+    auto _cond = !(detailStart.line >= prohibitedLinesStart && detailEnd.line <= prohibitedLinesEnd);
+    if (!_cond) {
+        fmt::print("ENFORCE condition is false: !( {} >= {} && {} <= {})\n", detailStart.line, prohibitedLinesStart, detailEnd.line, prohibitedLinesEnd);
+    }
     ENFORCE(!(detailStart.line >= prohibitedLinesStart && detailEnd.line <= prohibitedLinesEnd));
 }
 
@@ -25,6 +29,8 @@ void DefinitionLinesDenylistEnforcer::checkSym(core::Context ctx, core::SymbolRe
     if (isAllowListed(ctx, sym)) {
         return;
     }
+
+    fmt::print("checking sym: {}\n", sym.toString(ctx));
     checkLoc(ctx, sym.loc(ctx));
 }
 

@@ -748,6 +748,7 @@ TEST_CASE("PerPhaseTest") { // NOLINT
     handler.clear(*gs);
     auto symbolsBefore = gs->symbolsUsedTotal();
 
+    fmt::print("\n====================\nSHIFTING FILES\n====================\n");
     vector<ast::ParsedFile> newTrees;
     UnorderedMap<core::FileRef, int> prohibitedLinesMap;
     for (auto &f : trees) {
@@ -759,6 +760,7 @@ TEST_CASE("PerPhaseTest") { // NOLINT
         const int prohibitedLines = f.file.data(*gs).source().size();
         auto newSource = absl::StrCat(string(prohibitedLines + 1, '\n'), f.file.data(*gs).source());
         prohibitedLinesMap[f.file] = prohibitedLines;
+        fmt::print("f.file: {}, prohibitedLines: 0...{} \n", f.file.data(*gs).path(), prohibitedLines);
         auto newFile =
             make_shared<core::File>(string(f.file.data(*gs).path()), move(newSource), f.file.data(*gs).sourceType);
         gs->replaceFile(f.file, move(newFile));

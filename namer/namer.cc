@@ -1202,6 +1202,13 @@ private:
             // We only set the loc if the class is not declared.
             bool updateLoc =
                 !isUnknown || (!symbol.data(ctx)->isDeclared() && symbol.data(ctx)->loc().file() == ctx.file);
+            auto _loc = ctx.locAt(klass.declLoc);
+            auto _begin = core::Loc::offset2Pos(ctx.file.data(ctx), _loc.beginPos());
+            auto _end = core::Loc::offset2Pos(ctx.file.data(ctx), _loc.endPos());
+            fmt::print("updateLoc: {}, sym: {}, loc: {}, start: {}:{} end: {}:{}, file: {}\n", updateLoc,
+                       symbol.toString(ctx), ctx.locAt(klass.declLoc).toString(ctx), _begin.line, _begin.column,
+                       _end.line, _end.column, ctx.file.data(ctx).path());
+
             if (updateLoc) {
                 symbol.data(ctx)->addLoc(ctx, ctx.locAt(klass.declLoc));
             }
@@ -1214,6 +1221,7 @@ private:
                 }
 
                 auto singletonClass = symbol.data(ctx)->singletonClass(ctx); // force singleton class into existence
+                // fmt::print("singletonClass.addLoc: {}, loc: {}, start: {} end: {}\n", singletonClass.toString(ctx));
                 singletonClass.data(ctx)->addLoc(ctx, ctx.locAt(klass.declLoc));
 
                 // This willDeleteOldDefs condition is a hack to improve performance when editing within a method body.

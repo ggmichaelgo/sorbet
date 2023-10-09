@@ -2020,6 +2020,7 @@ void ClassOrModule::recordRequiredAncestorInternal(GlobalState &gs, ClassOrModul
     (cast_type<TupleType>(ancestors.data(gs)->arguments[0].type))->elems.emplace_back(tOrigin);
 
     // Store the RequiredAncestor.loc
+    stopInDebugger();
     ancestors.data(gs)->locs_.emplace_back(ancestor.loc);
 }
 
@@ -2660,6 +2661,7 @@ void Method::addLoc(const core::GlobalState &gs, core::Loc loc) {
         return;
     }
 
+    stopInDebugger();
     addLocInternal(gs, loc, this->loc(), locs_);
 }
 
@@ -2672,6 +2674,7 @@ void Field::addLoc(const core::GlobalState &gs, core::Loc loc) {
         return;
     }
 
+    stopInDebugger();
     addLocInternal(gs, loc, this->loc(), locs_);
 }
 
@@ -2684,6 +2687,7 @@ void TypeParameter::addLoc(const core::GlobalState &gs, core::Loc loc) {
         return;
     }
 
+    stopInDebugger();
     addLocInternal(gs, loc, this->loc(), locs_);
 }
 
@@ -2701,6 +2705,7 @@ void ClassOrModule::addLoc(const core::GlobalState &gs, core::Loc loc) {
     ENFORCE(ref(gs) != Symbols::root());
     ENFORCE(ref(gs) != Symbols::PackageSpecRegistry());
 
+    stopInDebugger();
     addLocInternal(gs, loc, this->loc(), locs_);
 }
 

@@ -12,7 +12,7 @@ ast::ParsedFile checkNoDefinitionsInsideProhibitedLines(core::GlobalState &gs, a
 
 bool DefinitionLinesDenylistEnforcer::isAllowListed(core::Context ctx, core::SymbolRef sym) {
     return sym.name(ctx) == core::Names::staticInit() || sym.name(ctx) == core::Names::Constants::Root() ||
-           sym.name(ctx) == core::Names::unresolvedAncestors();
+           sym.name(ctx) == core::Names::unresolvedAncestors() || sym.loc(ctx).file().data(ctx).isRBI();
 }
 
 void DefinitionLinesDenylistEnforcer::checkLoc(core::Context ctx, core::Loc loc) {

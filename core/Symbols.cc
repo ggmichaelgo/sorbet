@@ -2661,7 +2661,6 @@ void Method::addLoc(const core::GlobalState &gs, core::Loc loc) {
         return;
     }
 
-    stopInDebugger();
     addLocInternal(gs, loc, this->loc(), locs_);
 }
 
@@ -2674,7 +2673,6 @@ void Field::addLoc(const core::GlobalState &gs, core::Loc loc) {
         return;
     }
 
-    stopInDebugger();
     addLocInternal(gs, loc, this->loc(), locs_);
 }
 
@@ -2687,7 +2685,6 @@ void TypeParameter::addLoc(const core::GlobalState &gs, core::Loc loc) {
         return;
     }
 
-    stopInDebugger();
     addLocInternal(gs, loc, this->loc(), locs_);
 }
 
@@ -2705,7 +2702,7 @@ void ClassOrModule::addLoc(const core::GlobalState &gs, core::Loc loc) {
     ENFORCE(ref(gs) != Symbols::root());
     ENFORCE(ref(gs) != Symbols::PackageSpecRegistry());
 
-    stopInDebugger();
+    // stopInDebugger();
     addLocInternal(gs, loc, this->loc(), locs_);
 }
 

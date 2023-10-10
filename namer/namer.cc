@@ -1202,15 +1202,18 @@ private:
             // We only set the loc if the class is not declared.
             bool updateLoc =
                 !isUnknown || (!symbol.data(ctx)->isDeclared() && symbol.data(ctx)->loc().file() == ctx.file);
-            auto _loc = ctx.locAt(klass.declLoc);
-            auto _begin = core::Loc::offset2Pos(ctx.file.data(ctx), _loc.beginPos());
-            auto _end = core::Loc::offset2Pos(ctx.file.data(ctx), _loc.endPos());
-            fmt::print("updateLoc: {}, sym: {}, loc: {}, start: {}:{} end: {}:{}, file: {}\n", updateLoc,
-                       symbol.toString(ctx), ctx.locAt(klass.declLoc).toString(ctx), _begin.line, _begin.column,
-                       _end.line, _end.column, ctx.file.data(ctx).path());
-
             if (updateLoc) {
-                symbol.data(ctx)->addLoc(ctx, ctx.locAt(klass.declLoc));
+                auto _loc = ctx.locAt(klass.declLoc);
+                auto _begin = core::Loc::offset2Pos(ctx.file.data(ctx), _loc.beginPos());
+                auto _end = core::Loc::offset2Pos(ctx.file.data(ctx), _loc.endPos());
+                fmt::print("updateLoc: {}, sym: {}, start: {}:{} end: {}:{}, file: {}\n\n", updateLoc,
+                           symbol.toString(ctx), _begin.line, _begin.column, _end.line, _end.column,
+                           ctx.file.data(ctx).path());
+
+                if (absl::StrContains(symbol.toString(ctx), "FalseClass")) {
+                    stopInDebugger();
+                }
+                symbol.data(ctx)->addLoc(ctx, _loc);
             }
 
             if (!isUnknown) {

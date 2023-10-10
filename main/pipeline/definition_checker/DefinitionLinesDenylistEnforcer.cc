@@ -20,7 +20,7 @@ void DefinitionLinesDenylistEnforcer::checkLoc(core::Context ctx, core::Loc loc)
     auto detailEnd = core::Loc::offset2Pos(file.data(ctx), loc.endPos());
     auto _cond = !(detailStart.line >= prohibitedLinesStart && detailEnd.line <= prohibitedLinesEnd);
     if (!_cond) {
-        fmt::print("ENFORCE condition is false: !( {} >= {} && {} <= {})\n", detailStart.line, prohibitedLinesStart, detailEnd.line, prohibitedLinesEnd);
+        fmt::print("ENFORCE condition is false: !( {} >= {} && {} <= {})\n\nloc.beginPos: {}, loc.endPos: {}", detailStart.line, prohibitedLinesStart, detailEnd.line, prohibitedLinesEnd, loc.beginPos(), loc.endPos());
     }
     ENFORCE(!(detailStart.line >= prohibitedLinesStart && detailEnd.line <= prohibitedLinesEnd));
 }

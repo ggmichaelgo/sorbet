@@ -38,13 +38,13 @@
 #include "definition_validator/validator.h"
 #include "infer/infer.h"
 #include "local_vars/local_vars.h"
+#include "main/pipeline/definition_checker/DefinitionLinesDenylistEnforcer.h"
 #include "main/pipeline/semantic_extension/SemanticExtension.h"
 #include "namer/namer.h"
 #include "parser/parser.h"
 #include "pipeline.h"
 #include "resolver/resolver.h"
 #include "rewriter/rewriter.h"
-#include "main/pipeline/definition_checker/DefinitionLinesDenylistEnforcer.h"
 
 using namespace std;
 
@@ -836,6 +836,7 @@ ast::ParsedFilesOrCancelled resolve(unique_ptr<core::GlobalState> &gs, vector<as
 
             if (opts.stressIncrementalResolver) {
                 auto symbolsBefore = gs->symbolsUsedTotal();
+                UnorderedSet<core::FileRef> files;
                 for (auto &f : what) {
                     // Shift contents of file past current file's EOF, re-run incrementalResolve, assert that no
                     // locations appear before file's old EOF.
@@ -853,10 +854,11 @@ ast::ParsedFilesOrCancelled resolve(unique_ptr<core::GlobalState> &gs, vector<as
                     auto reresolved =
                         pipeline::incrementalResolve(*gs, move(toBeReResolved), foundHashesForFiles, opts);
                     ENFORCE(reresolved.size() == 1);
-                    f = sorbet::pipeline::definition_checker::checkNoDefinitionsInsideProhibitedLines(*gs, move(reresolved[0]), 0, prohibitedLines);
+                    files.emplace(f.file);
                 }
                 ENFORCE(symbolsBefore == gs->symbolsUsedTotal(),
                         "Stressing the incremental resolver should not add any new symbols");
+                sorbet::pipeline::definition_checker::checkNoDefinitionsInsideProhibitedLines(*gs, files);
             }
         }
     } catch (SorbetException &) {

@@ -40,6 +40,25 @@ steps:
     artifact_paths: _out_/profile.json
     <<: *elastic
 
+  - label: ":linux: linters.sh"
+    command: .buildkite/linters.sh
+    <<: &elastic-arm64
+      agents:
+        os: linux
+        queue: elastic-arm64
+      plugins:
+        - docker#0d9b114b0ca8ec7167787285274aa3842392374d:
+            image: "sorbetruby/sorbet-build-image:latest"
+            workdir: /app
+            always-pull: false
+            init: true
+            propagate-environment: true
+            environment:
+              - "SORBET_RUBYGEMS_API_KEY"
+            volumes:
+              - "/usr/local/var/bazelcache:/usr/local/var/bazelcache"
+
+
   - label: ":linux: test-compiler.sh"
     command: .buildkite/test-compiler.sh
     artifact_paths:

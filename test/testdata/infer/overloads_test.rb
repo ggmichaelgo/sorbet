@@ -131,6 +131,21 @@ class BlockOverloads
   sig { returns(A) }
   def ambiguous_untyped_b(&blk); end
 
+  sig { returns(A) }
+  sig do
+    type_parameters(:U)
+      .params(blk: T.proc.returns(T.type_parameter(:U)))
+      .returns(T.type_parameter(:U))
+  end
+  def not_fully_defined(&blk); end
+  sig do
+    type_parameters(:U)
+      .params(blk: T.proc.returns(T.type_parameter(:U)))
+      .returns(T.type_parameter(:U))
+  end
+  sig { returns(A) }
+  def not_fully_defined_flipped(&blk); end
+
   def test
     x = simple
     T.reveal_type(x) # error: `A`
@@ -165,6 +180,18 @@ class BlockOverloads
     x = ambiguous_untyped_b
     T.reveal_type(x) # error: `B`
     x = ambiguous_untyped_b {}
+    T.reveal_type(x) # error: `B`
+
+
+    x = not_fully_defined
+    T.reveal_type(x) # error: `A`
+    x = not_fully_defined {B.new}
+    T.reveal_type(x) # error: `B`
+
+    1.times do
+      not_fully_defined_flipped # error: requires a block parameter, but no block was passed
+    end
+    x = not_fully_defined_flipped {B.new}
     T.reveal_type(x) # error: `B`
   end
 end

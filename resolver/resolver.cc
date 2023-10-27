@@ -2597,7 +2597,9 @@ class ResolveTypeMembersAndFieldsWalk {
             return;
         }
 
-        auto alias = ctx.state.enterMethodSymbol(ctx.locAt(job.fromNameLoc), job.owner, job.fromName);
+        auto loc = ctx.locAt(job.fromNameLoc);
+        auto alias = ctx.state.enterMethodSymbol(loc, job.owner, job.fromName);
+        alias.data(ctx)->addLoc(ctx, loc);
         alias.data(ctx)->resultType = core::make_type<core::AliasType>(core::SymbolRef(toMethod));
 
         // Add a fake keyword argument to remember the toName (for fast path hashing).
@@ -3801,7 +3803,7 @@ private:
             [&](ast::Send &send) {
                 if (TypeSyntax::isSig(ctx, send)) {
                     if (!lastSigs.empty()) {
-                        if (!ctx.permitOverloadDefinitions(ctx.file)) {
+                        if (!ctx.file.data(ctx).permitOverloadDefinitions()) {
                             if (auto e = ctx.beginError(lastSigs[0]->loc, core::errors::Resolver::OverloadNotAllowed)) {
                                 e.setHeader("Unused type annotation. No method def before next annotation");
                                 e.addErrorLine(ctx.locAt(send.loc), "Type annotation that will be used instead");
@@ -3877,7 +3879,7 @@ private:
                                                                        lastSig->loc,
                                                                        parseSig(ctx, sigOwner, *lastSig, mdef)});
                     } else {
-                        bool isOverloaded = ctx.permitOverloadDefinitions(ctx.file);
+                        bool isOverloaded = ctx.file.data(ctx).permitOverloadDefinitions();
                         InlinedVector<OverloadedMethodSignature, 2> sigs;
                         for (auto &lastSig : lastSigs) {
                             auto sig = parseSig(ctx, sigOwner, *lastSig, mdef);

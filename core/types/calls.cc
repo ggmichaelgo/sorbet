@@ -214,9 +214,7 @@ DispatchResult SelfTypeParam::dispatchCall(const GlobalState &gs, const Dispatch
             // Short circuit here to avoid constructing an expensive error message.
             return emptyResult;
         }
-        auto funLoc = args.funLoc();
-        auto errLoc = (funLoc.exists() && !funLoc.empty()) ? funLoc : args.callLoc();
-        auto e = gs.beginError(errLoc, errors::Infer::CallOnTypeArgument);
+        auto e = gs.beginError(args.errLoc(), errors::Infer::CallOnTypeArgument);
         if (e) {
             auto thisStr = args.thisType.show(gs);
             if (args.fullType.type != args.thisType) {
@@ -241,9 +239,7 @@ DispatchResult SelfTypeParam::dispatchCall(const GlobalState &gs, const Dispatch
                 return emptyResult;
             }
 
-            auto funLoc = args.funLoc();
-            auto errLoc = (funLoc.exists() && !funLoc.empty()) ? funLoc : args.callLoc();
-            auto e = gs.beginError(errLoc, errors::Infer::CallOnUnboundedTypeMember);
+            auto e = gs.beginError(args.errLoc(), errors::Infer::CallOnUnboundedTypeMember);
             if (e) {
                 auto member = typeMember.data(gs)->owner.asClassOrModuleRef().data(gs)->attachedClass(gs).exists()
                                   ? "template"
@@ -342,27 +338,35 @@ unique_ptr<Error> missingArg(const GlobalState &gs, Loc argsLoc, Loc receiverLoc
     return nullptr;
 }
 
-int getArity(const GlobalState &gs, MethodRef method) {
+size_t getArity(const GlobalState &gs, MethodRef method) {
     ENFORCE(!method.data(gs)->arguments.empty(), "Every method should have at least a block arg.");
     ENFORCE(method.data(gs)->arguments.back().flags.isBlock, "Last arg should be the block arg.");
+
+    const auto &arguments = method.data(gs)->arguments;
+    if (absl::c_any_of(arguments, [&](const auto &arg) { return arg.flags.isRepeated && !arg.flags.isKeyword; })) {
+        return SIZE_MAX;
+    };
 
     // Don't count the block arg in the arity
     return method.data(gs)->arguments.size() - 1;
 }
+
+struct GuessOverloadCandidate {
+    MethodRef candidate;
+    shared_ptr<TypeConstraint> constr;
+};
 
 // Guess overload. The way we guess is only arity based - we will return the overload that has the smallest number of
 // arguments that is >= args.size()
 MethodRef guessOverload(const GlobalState &gs, ClassOrModuleRef inClass, MethodRef primary, uint16_t numPosArgs,
                         InlinedVector<const TypeAndOrigins *, 2> &args, const vector<TypePtr> &targs, bool hasBlock) {
     counterInc("calls.overloaded_invocations");
-    ENFORCE(Context::permitOverloadDefinitions(gs, primary.data(gs)->loc().file(), primary),
-            "overload not permitted here");
     MethodRef fallback = primary;
     vector<MethodRef> allCandidates;
 
     allCandidates.emplace_back(primary);
     { // create candidates and sort them by number of arguments(stable by symbol id)
-        int i = 0;
+        size_t i = 0;
         MethodRef current = primary;
         while (current.data(gs)->flags.isOverloaded) {
             i++;
@@ -376,33 +380,76 @@ MethodRef guessOverload(const GlobalState &gs, ClassOrModuleRef inClass, MethodR
             }
         }
 
-        fast_sort(allCandidates, [&](MethodRef s1, MethodRef s2) -> bool {
-            if (getArity(gs, s1) < getArity(gs, s2)) {
+        fast_sort(allCandidates, [&](const auto &s1, const auto &s2) -> bool {
+            auto s1Arity = getArity(gs, s1);
+            auto s2Arity = getArity(gs, s2);
+            if (s1Arity < s2Arity) {
                 return true;
             }
-            if (getArity(gs, s1) == getArity(gs, s2)) {
+            if (s1Arity == s2Arity) {
                 return s1.id() < s2.id();
             }
             return false;
         });
     }
 
-    vector<MethodRef> leftCandidates = allCandidates;
+    vector<GuessOverloadCandidate> allCandidatesWithConstraints;
+
+    for (const auto &candidate : allCandidates) {
+        if (!candidate.data(gs)->flags.isGenericMethod) {
+            allCandidatesWithConstraints.emplace_back(GuessOverloadCandidate{candidate, nullptr});
+            continue;
+        }
+
+        // Make a new TypeConstraint with everything in the domain solving to `T.untyped`.
+        //
+        // This allows Sorbet to consider or reject an overload with a parameter like
+        // `T::Array[T.type_parameter(:U)]` based on whether the argument is `String`--in that case,
+        // it doesn't matter what the `T.type_parameter(:U)` is, because `String` is not an `Array`.
+        auto constr = make_unique<TypeConstraint>();
+        for (auto typeArgument : candidate.data(gs)->typeArguments()) {
+            constr->rememberIsSubtype(gs, typeArgument.data(gs)->resultType, Types::untypedUntracked());
+        }
+        if (!constr->solve(gs)) {
+            Exception::raise("Constraint should always solve after creating TypeConstraint with only untyped bounds");
+        }
+
+        allCandidatesWithConstraints.emplace_back(GuessOverloadCandidate{candidate, move(constr)});
+    }
+
+    // Copy the vector
+    auto leftCandidates = allCandidatesWithConstraints;
 
     {
         auto checkArg = [&](auto i, const TypePtr &arg) {
             for (auto it = leftCandidates.begin(); it != leftCandidates.end(); /* nothing*/) {
-                MethodRef candidate = *it;
-                if (i >= getArity(gs, candidate)) {
+                const auto &[candidate, constr] = *it;
+                const auto &arguments = candidate.data(gs)->arguments;
+                TypePtr argTypeRaw;
+                auto arity = getArity(gs, candidate);
+                if (i < arguments.size() - 1) {
+                    argTypeRaw = arguments[i].type;
+                } else if (arity == SIZE_MAX) {
+                    auto restArg = absl::c_find_if(
+                        arguments, [&](const auto &arg) { return arg.flags.isRepeated && !arg.flags.isKeyword; });
+                    ENFORCE(restArg != arguments.end())
+                    argTypeRaw = restArg->type;
+                } else {
                     it = leftCandidates.erase(it);
                     continue;
                 }
 
-                auto argType = Types::resultTypeAsSeenFrom(gs, candidate.data(gs)->arguments[i].type,
-                                                           candidate.data(gs)->owner, inClass, targs);
-                if (argType.isFullyDefined() && !Types::isSubType(gs, arg, argType)) {
-                    it = leftCandidates.erase(it);
-                    continue;
+                auto argType = Types::resultTypeAsSeenFrom(gs, argTypeRaw, candidate.data(gs)->owner, inClass, targs);
+                if (constr == nullptr) {
+                    if (!Types::isSubType(gs, arg, argType)) {
+                        it = leftCandidates.erase(it);
+                        continue;
+                    }
+                } else {
+                    if (!Types::isSubTypeUnderConstraint(gs, *constr, arg, argType, UntypedMode::AlwaysCompatible)) {
+                        it = leftCandidates.erase(it);
+                        continue;
+                    }
                 }
                 ++it;
             }
@@ -419,20 +466,29 @@ MethodRef guessOverload(const GlobalState &gs, ClassOrModuleRef inClass, MethodR
         }
     }
     if (leftCandidates.empty()) {
-        leftCandidates = allCandidates;
+        leftCandidates = allCandidatesWithConstraints;
     } else {
-        fallback = leftCandidates[0];
+        fallback = leftCandidates[0].candidate;
     }
 
     { // keep only candidates that have a block iff we are passing one
         for (auto it = leftCandidates.begin(); it != leftCandidates.end(); /* nothing*/) {
-            MethodRef candidate = *it;
+            const auto &[candidate, constr] = *it;
             const auto &args = candidate.data(gs)->arguments;
             ENFORCE(!args.empty(), "Should at least have a block argument.");
-            auto mentionsBlockArg = !args.back().isSyntheticBlockArgument();
-            if (mentionsBlockArg != hasBlock) {
-                it = leftCandidates.erase(it);
-                continue;
+            const auto &lastArg = args.back();
+            auto mentionsBlockArg = !lastArg.isSyntheticBlockArgument();
+            if (hasBlock) {
+                if (!mentionsBlockArg || lastArg.type == Types::nilClass()) {
+                    it = leftCandidates.erase(it);
+                    continue;
+                }
+            } else {
+                if (mentionsBlockArg && lastArg.type != nullptr &&
+                    (!lastArg.type.isFullyDefined() || !Types::isSubType(gs, Types::nilClass(), lastArg.type))) {
+                    it = leftCandidates.erase(it);
+                    continue;
+                }
             }
             ++it;
         }
@@ -442,12 +498,12 @@ MethodRef guessOverload(const GlobalState &gs, ClassOrModuleRef inClass, MethodR
         struct Comp {
             const GlobalState &gs;
 
-            bool operator()(MethodRef s, int i) const {
-                return getArity(gs, s) < i;
+            bool operator()(GuessOverloadCandidate &s, int i) const {
+                return getArity(gs, s.candidate) < i;
             }
 
-            bool operator()(int i, MethodRef s) const {
-                return i < getArity(gs, s);
+            bool operator()(int i, GuessOverloadCandidate &s) const {
+                return i < getArity(gs, s.candidate);
             }
 
             Comp(const GlobalState &gs) : gs(gs){};
@@ -460,7 +516,7 @@ MethodRef guessOverload(const GlobalState &gs, ClassOrModuleRef inClass, MethodR
     }
 
     if (!leftCandidates.empty()) {
-        return leftCandidates[0];
+        return leftCandidates[0].candidate;
     }
     return fallback;
 }
@@ -559,8 +615,7 @@ const ShapeType *fromKwargsHash(const GlobalState &gs, const TypePtr &ty) {
 //    (with a subtype check on the key type, once we have generics)
 DispatchResult dispatchCallSymbol(const GlobalState &gs, const DispatchArgs &args, core::ClassOrModuleRef symbol,
                                   const vector<TypePtr> &targs) {
-    auto funLoc = args.funLoc();
-    auto errLoc = (funLoc.exists() && !funLoc.empty()) ? funLoc : args.callLoc();
+    auto errLoc = args.errLoc();
     if (symbol == core::Symbols::untyped()) {
         auto what = core::errors::Infer::errorClassForUntyped(gs, args.locs.file, args.thisType);
         if (auto e = gs.beginError(errLoc, what)) {
@@ -640,11 +695,14 @@ DispatchResult dispatchCallSymbol(const GlobalState &gs, const DispatchArgs &arg
         if (e) {
             string thisStr = args.thisType.show(gs);
             auto ancestorsOf = args.name == Names::super() ? "ancestors of " : "";
+            auto isSetter = targetName.isSetter(gs);
+            auto methodPrefix = isSetter ? "Setter method" : "Method";
             if (args.fullType.type != args.thisType) {
-                e.setHeader("Method `{}` does not exist on {}`{}` component of `{}`", targetName.show(gs), ancestorsOf,
-                            thisStr, args.fullType.type.show(gs));
+                e.setHeader("{} `{}` does not exist on {}`{}` component of `{}`", methodPrefix, targetName.show(gs),
+                            ancestorsOf, thisStr, args.fullType.type.show(gs));
             } else {
-                e.setHeader("Method `{}` does not exist on {}`{}`", targetName.show(gs), ancestorsOf, thisStr);
+                e.setHeader("{} `{}` does not exist on {}`{}`", methodPrefix, targetName.show(gs), ancestorsOf,
+                            thisStr);
             }
             e.addErrorSection(args.fullType.explainGot(gs, args.originForUninitialized));
 
@@ -709,6 +767,13 @@ DispatchResult dispatchCallSymbol(const GlobalState &gs, const DispatchArgs &arg
                     if (!possibleSymbol.isClassOrModule() &&
                         (!possibleSymbol.isMethod() ||
                          (possibleSymbol.asMethodRef().data(gs)->flags.isPrivate && !args.isPrivateOk))) {
+                        continue;
+                    }
+
+                    if (isSetter && possibleSymbol.name(gs).lookupWithEq(gs) == args.name) {
+                        e.addErrorLine(possibleSymbol.loc(gs),
+                                       "Method `{}` defined here without a corresponding setter",
+                                       possibleSymbol.name(gs).show(gs));
                         continue;
                     }
 
@@ -1565,8 +1630,7 @@ DispatchResult badMetaTypeCall(const GlobalState &gs, const DispatchArgs &args, 
 } // namespace
 
 DispatchResult MetaType::dispatchCall(const GlobalState &gs, const DispatchArgs &args) const {
-    auto funLoc = args.funLoc();
-    auto errLoc = (funLoc.exists() && !funLoc.empty()) ? funLoc : args.callLoc();
+    auto errLoc = args.errLoc();
     switch (args.name.rawId()) {
         case Names::new_().rawId(): {
             if (!canCallNew(gs, wrapped)) {
@@ -2578,7 +2642,7 @@ public:
             auto what = core::errors::Infer::errorClassForUntyped(gs, args.locs.file, receiver->type);
             if (auto e = gs.beginError(args.argLoc(0), what)) {
                 e.setHeader("Call to method `{}` on `{}`", fn.show(gs), "T.untyped");
-                TypeErrorDiagnostics::explainUntyped(gs, e, what, args.fullType, args.originForUninitialized);
+                TypeErrorDiagnostics::explainUntyped(gs, e, what, *receiver, args.originForUninitialized);
             }
 
             res.returnType = receiver->type;
@@ -3929,9 +3993,7 @@ public:
         auto isOnlySymbol =
             Types::isSubType(gs, args.fullType.type, Types::any(gs, Types::nilClass(), Types::Symbol()));
         if (isOnlySymbol && Types::all(gs, args.fullType.type, args.args[0]->type).isBottom()) {
-            auto funLoc = args.funLoc();
-            auto errLoc = (funLoc.exists() && !funLoc.empty()) ? funLoc : args.callLoc();
-            if (auto e = gs.beginError(errLoc, errors::Infer::NonOverlappingEqual)) {
+            if (auto e = gs.beginError(args.errLoc(), errors::Infer::NonOverlappingEqual)) {
                 e.setHeader("Comparison between `{}` and `{}` is always false", args.fullType.type.show(gs),
                             args.args[0]->type.show(gs));
                 e.addErrorSection(args.fullType.explainGot(gs, args.originForUninitialized));
@@ -3965,9 +4027,7 @@ public:
             // to because it would likely be a cause for surprise).
             Types::isSubType(gs, args.args[0]->type, Types::any(gs, Types::nilClass(), Types::Symbol())) &&
             Types::all(gs, args.fullType.type, args.args[0]->type).isBottom()) {
-            auto funLoc = args.funLoc();
-            auto errLoc = (funLoc.exists() && !funLoc.empty()) ? funLoc : args.callLoc();
-            if (auto e = gs.beginError(errLoc, errors::Infer::NonOverlappingEqual)) {
+            if (auto e = gs.beginError(args.errLoc(), errors::Infer::NonOverlappingEqual)) {
                 e.setHeader("Comparison between `{}` and `{}` is always false", args.fullType.type.show(gs),
                             args.args[0]->type.show(gs));
                 e.addErrorSection(args.fullType.explainGot(gs, args.originForUninitialized));
@@ -4239,9 +4299,7 @@ public:
         }
         auto forwarderSym = forwarderSingleton.data(gs)->attachedClass(gs);
 
-        auto funLoc = args.funLoc();
-        auto errLoc = (funLoc.exists() && !funLoc.empty()) ? funLoc : args.callLoc();
-        if (auto e = gs.beginError(errLoc, core::errors::Infer::MetaTypeDispatchCall)) {
+        if (auto e = gs.beginError(args.errLoc(), core::errors::Infer::MetaTypeDispatchCall)) {
             auto realSym = forwarderSym.maybeUnwrapBuiltinGenericForwarder();
             ENFORCE(realSym.exists());
             auto realStr = realSym.show(gs);

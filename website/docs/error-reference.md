@@ -1716,7 +1716,7 @@ end
 ## 5020
 
 There are a few constraints around how methods like `include`, `extend`,
-`mixes_in_class_methods` [(docs)](abstract.mdd), and `requires_ancestor`
+`mixes_in_class_methods` [(docs)](abstract.md), and `requires_ancestor`
 [(docs)](requires-ancestor.md) work.
 
 - `include` and `extend` must be given a constant that Sorbet can _statically_
@@ -1993,18 +1993,27 @@ intent to create a new type alias.)
 
 ## 5035
 
-A method was marked `override`, but sorbet was unable to find a method in the
-class's ancestors that would be overridden. Ensure that the method being
-overridden exists in the ancestors of the class defining the `override` method,
-or remove `override` from the signature that's raising the error. See
-[Override Checking](override-checking.md) for more information about `override`.
+There are two cases when Sorbet might produce this error code:
 
-If the parent method definitely exists at runtime, it might be hidden in a
-[`# typed: ignore`](static#file-level-granularity-strictness-levels) file.
-Sorbet will not see it and this error will be raised. In that case you will need
-to either raise the `typed` sigil of that file above `ignore`, or generate an
-[RBI file](rbi) that contains signatures for the classes and methods that file
-defines.
+1.  A method was marked `override`, but sorbet was unable to find a method in
+    the class's ancestors that would be overridden. Ensure that the method being
+    overridden exists in the ancestors of the class defining the `override`
+    method, or remove `override` from the signature that's raising the error.
+
+    If the parent method definitely exists at runtime, it might be hidden in a
+    [`# typed: ignore`](static#file-level-granularity-strictness-levels) file,
+    or defined via metaprogramming. To fix, either raise the `typed` sigil of
+    that file above `ignore`, or generate an [RBI file](rbi) that contains
+    signatures for the classes and methods that file defines.
+
+1.  Sorbet found the method that this method overrides, but the override method
+    is not valid. An override method must accept at least as many arguments as
+    the parent method, with types at least as wide as the parent's types, and
+    return a value that is at most as wide as the parent's return type. This is
+    in keeping with the
+    [Liskov substitution principle](https://en.wikipedia.org/wiki/Liskov_substitution_principle).
+
+See [Override Checking](override-checking.md) for more.
 
 ## 5036
 
@@ -2196,32 +2205,7 @@ If this workaround will not work in your case, the final alternative is to
 either omit a signature for the method in question (or define an explicit
 signature where all parameters that cannot be typed accurately use `T.untyped`).
 
-**Why are overloads not well-supported in Sorbet?**
-
-Consider how overloading works in typed, compiled languages like C++ or Java;
-each overload is a separate method. They actually have separate implementations,
-are type checked separately, compile (with link-time name mangling) to separate
-symbols in the compiled object, and the compiler knows how to resolve each call
-site to a specific overload ahead of time, either statically or dynamically via
-virtual dispatch.
-
-Meanwhile, Ruby itself doesn't have overloading—there's only ever one method
-registered with a given name in the VM, regardless of what arguments it accepts.
-That complicates things. It becomes unclear how Sorbet should typecheck the body
-of the method (against all sigs? against one sig? against the component-wise
-union of their arguments?). There's no clear answer, and anything we choose will
-be bound to confuse or surprise someone.
-
-Also because Sorbet doesn't control whether the method can be dispatched to,
-even if it were going to make a static claim about whether the code type checks,
-it doesn't get to control which (fake) overload will get dispatched to at the
-call site (again: there's only one version of the method in the VM).
-
-Finally this choice is somewhat philosophical: codebases that make heavy use of
-overloading (even in typed languages where overloading is supported) tend to be
-harder for readers to understand at a glance. The above workaround of defining
-multiple methods with unique names solves this readability problem, because now
-each overload has a descriptive name.
+For more, see [Methods with Overloaded Signatures](overloads.md).
 
 ## 5041
 
@@ -4356,9 +4340,13 @@ See also:
 - [How can I fix type errors that arise from `super`?]
 
 [Why is `super` untyped, even when the parent method has a `sig`?]:
-  faq.md#why-is-super-untyped-even-when-the-parent-method-has-a-sig
+  /docs/faq#why-is-super-untyped-even-when-the-parent-method-has-a-sig
 [How can I fix type errors that arise from `super`?]:
-  faq.md#how-can-i-fix-type-errors-that-arise-from-super
+  /docs/faq#how-can-i-fix-type-errors-that-arise-from-super
+
+## 7049
+
+See [Methods with Overloaded Signatures](overloads.md) for complete docs on.
 
 <!-- -->
 

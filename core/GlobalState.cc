@@ -1299,6 +1299,7 @@ TypeArgumentRef GlobalState::enterTypeArgument(Loc loc, MethodRef owner, NameRef
         if (typeArg.dataAllowingNone(*this)->name == name) {
             ENFORCE(typeArg.dataAllowingNone(*this)->flags.hasFlags(flags), "existing symbol has wrong flags");
             counterInc("symbols.hit");
+            typeArg.data(*this)->addLoc(*this, loc);
             return typeArg;
         }
     }
@@ -1426,7 +1427,11 @@ FieldRef GlobalState::enterStaticFieldSymbol(Loc loc, ClassOrModuleRef owner, Na
     if (store.exists()) {
         ENFORCE(store.isStaticField(*this), "existing symbol is not a static field");
         counterInc("symbols.hit");
-        return store.asFieldRef();
+
+        // Ensures that locs get properly updated on the fast path
+        auto fieldRef = store.asFieldRef();
+        fieldRef.data(*this)->addLoc(*this, loc);
+        return fieldRef;
     }
 
     ENFORCE(!symbolTableFrozen);
